@@ -24,10 +24,14 @@ jobs:
       - name: Build UMDF2 driver
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Continue'
+          $PSNativeCommandUseErrorActionPreference = $false
           msbuild .\hid\vhidmini2\driver\umdf2\VhidminiUm.vcxproj /m /p:Configuration=Release /p:Platform=x64 '/flp:logfile=build.log;verbosity=normal'
           $buildExitCode = $LASTEXITCODE
           if ($buildExitCode -ne 0) {
-            Get-Content build.log -Tail 30 | ForEach-Object {
+            if (Test-Path build.log) { $lines = Get-Content build.log -Tail 30 }
+            else { $lines = @('MSBuild did not create build.log') }
+            $lines | ForEach-Object {
               $line = $_.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
               Write-Host "::error::$line"
             }
