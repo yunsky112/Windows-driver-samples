@@ -40,10 +40,16 @@ typedef struct _DEVICE_CONTEXT
     WDFQUEUE                DefaultQueue;
     WDFQUEUE                ManualQueue;
     HID_DEVICE_ATTRIBUTES   HidDeviceAttributes;
-    BYTE                    DeviceData;
     HID_DESCRIPTOR          HidDescriptor;
     PHID_REPORT_DESCRIPTOR  ReportDescriptor;
     BOOLEAN                 ReadReportDescFromRegistry;
+    WDFWAITLOCK             ReportLock;
+    UCHAR                   HostReports[KNX_REPORT_QUEUE_DEPTH][KNX_HID_REPORT_SIZE];
+    UCHAR                   InputReports[KNX_REPORT_QUEUE_DEPTH][KNX_HID_REPORT_SIZE];
+    ULONG                   HostHead;
+    ULONG                   HostCount;
+    ULONG                   InputHead;
+    ULONG                   InputCount;
 
 } DEVICE_CONTEXT, *PDEVICE_CONTEXT;
 
@@ -53,7 +59,6 @@ typedef struct _QUEUE_CONTEXT
 {
     WDFQUEUE                Queue;
     PDEVICE_CONTEXT         DeviceContext;
-    UCHAR                   OutputReport;
 
 } QUEUE_CONTEXT, *PQUEUE_CONTEXT;
 
@@ -167,14 +172,11 @@ ReadDescriptorFromRegistry(
     );
 
 //
-// Misc definitions
-//
-#define CONTROL_FEATURE_REPORT_ID   0x01
-
-//
 // These are the device attributes returned by the mini driver in response
 // to IOCTL_HID_GET_DEVICE_ATTRIBUTES.
 //
-#define HIDMINI_PID             0xFEED
-#define HIDMINI_VID             0xDEED
-#define HIDMINI_VERSION         0x0101
+// Active #else branch of KAIStack USBIF/src/USB_User/usb_desc.c:
+// idVendor bytes C2 28, idProduct bytes 1C 00 (USB little endian).
+#define HIDMINI_PID             0x001C
+#define HIDMINI_VID             0x28C2
+#define HIDMINI_VERSION         0x0200

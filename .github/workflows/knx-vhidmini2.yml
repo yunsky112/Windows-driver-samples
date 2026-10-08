@@ -1,0 +1,30 @@
+name: Build KNX virtual HID UMDF2
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [knx-virtual-hid]
+    paths:
+      - 'hid/vhidmini2/**'
+      - '.github/workflows/knx-vhidmini2.yml'
+
+jobs:
+  build:
+    runs-on: windows-2025-vs2026
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore Windows SDK and WDK packages
+        shell: pwsh
+        run: nuget restore .\packages.config -PackagesDirectory .\packages\
+      - name: Build UMDF2 driver
+        shell: pwsh
+        run: msbuild .\hid\vhidmini2\driver\umdf2\VhidminiUm.vcxproj /m /p:Configuration=Release /p:Platform=x64
+      - name: Upload driver package
+        uses: actions/upload-artifact@v4
+        with:
+          name: knx-vhidmini2-x64
+          if-no-files-found: error
+          path: |
+            hid/vhidmini2/driver/umdf2/**/VhidminiUm.dll
+            hid/vhidmini2/driver/umdf2/**/VhidminiUm.inf
+            hid/vhidmini2/driver/umdf2/**/*.cat

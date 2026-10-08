@@ -30,6 +30,16 @@ Environment:
 #define  HIDMINI_CONTROL_CODE_DUMMY1                      0x01
 #define  HIDMINI_CONTROL_CODE_DUMMY2                      0x02
 
+// KNX USB HID transport: 64-byte Report ID 1, as in thelsing/knx.
+// The separate feature collection is a private Qt-to-driver control channel.
+#define KNX_HID_REPORT_ID                                  0x01
+#define KNX_CONTROL_REPORT_ID                              0xF0
+#define KNX_HID_REPORT_SIZE                                64
+#define KNX_CONTROL_FEATURE_SIZE                           66
+#define KNX_FEATURE_INJECT_INPUT                           0x01
+#define KNX_FEATURE_OUTPUT_AVAILABLE                       0x01
+#define KNX_REPORT_QUEUE_DEPTH                             32
+
 //
 // This is the report id of the collection to which the control codes are sent
 //
@@ -37,10 +47,10 @@ Environment:
 #define TEST_COLLECTION_REPORT_ID                         0x02
 
 #define MAXIMUM_STRING_LENGTH           (126 * sizeof(WCHAR))
-#define VHIDMINI_MANUFACTURER_STRING    L"UMDF Virtual hidmini device Manufacturer string"  
-#define VHIDMINI_PRODUCT_STRING         L"UMDF Virtual hidmini device Product string"  
-#define VHIDMINI_SERIAL_NUMBER_STRING   L"UMDF Virtual hidmini device Serial Number string"  
-#define VHIDMINI_DEVICE_STRING          L"UMDF Virtual hidmini device"  
+#define VHIDMINI_MANUFACTURER_STRING    L"OSiX"
+#define VHIDMINI_PRODUCT_STRING         L"KNX USB Interface"
+#define VHIDMINI_SERIAL_NUMBER_STRING   L"etsusbif"
+#define VHIDMINI_DEVICE_STRING          L"KNX Virtual USB Interface"
 #define VHIDMINI_DEVICE_STRING_INDEX    5
 #include <pshpack1.h>
 

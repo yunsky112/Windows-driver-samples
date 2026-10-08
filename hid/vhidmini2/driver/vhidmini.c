@@ -23,25 +23,22 @@ Environment:
 // by the mini driver in response to IOCTL_HID_GET_REPORT_DESCRIPTOR.
 //
 HID_REPORT_DESCRIPTOR       G_DefaultReportDescriptor[] = {
-    0x06,0x00, 0xFF,                // USAGE_PAGE (Vender Defined Usage Page)
-    0x09,0x01,                      // USAGE (Vendor Usage 0x01)
-    0xA1,0x01,                      // COLLECTION (Application)
-    0x85,CONTROL_FEATURE_REPORT_ID,    // REPORT_ID (1)
-    0x09,0x01,                         // USAGE (Vendor Usage 0x01)
-    0x15,0x00,                         // LOGICAL_MINIMUM(0)
-    0x26,0xff, 0x00,                   // LOGICAL_MAXIMUM(255)
-    0x75,0x08,                         // REPORT_SIZE (0x08)
-    0x96,(FEATURE_REPORT_SIZE_CB & 0xff), (FEATURE_REPORT_SIZE_CB >> 8), // REPORT_COUNT
-    0xB1,0x00,                         // FEATURE (Data,Ary,Abs)
-    0x09,0x01,                         // USAGE (Vendor Usage 0x01)
-    0x75,0x08,                         // REPORT_SIZE (0x08)
-    0x96,(INPUT_REPORT_SIZE_CB & 0xff), (INPUT_REPORT_SIZE_CB >> 8), // REPORT_COUNT
-    0x81,0x00,                         // INPUT (Data,Ary,Abs)
-    0x09,0x01,                         // USAGE (Vendor Usage 0x01)
-    0x75,0x08,                         // REPORT_SIZE (0x08)
-    0x96,(OUTPUT_REPORT_SIZE_CB & 0xff), (OUTPUT_REPORT_SIZE_CB >> 8), // REPORT_COUNT
-    0x91,0x00,                         // OUTPUT (Data,Ary,Abs)
-    0xC0,                           // END_COLLECTION
+    // KNX top-level collection from thelsing/knx UsbTunnelInterface.
+    0x06, 0xA0, 0xFF, 0x09, 0x01, 0xA1, 0x01,
+    0x09, 0x01, 0xA1, 0x00,
+    0x06, 0xA1, 0xFF,
+    0x09, 0x03, 0x09, 0x04,
+    0x15, 0x80, 0x25, 0x7F, 0x35, 0x00, 0x45, 0xFF,
+    0x75, 0x08, 0x85, KNX_HID_REPORT_ID, 0x95, 0x3F, 0x81, 0x02,
+    0x09, 0x05, 0x09, 0x06,
+    0x15, 0x80, 0x25, 0x7F, 0x35, 0x00, 0x45, 0xFF,
+    0x75, 0x08, 0x85, KNX_HID_REPORT_ID, 0x95, 0x3F, 0x91, 0x02,
+    0xC0, 0xC0,
+    // Separate top-level collection: Qt side-band feature transport.
+    0x06, 0xA2, 0xFF, 0x09, 0x01, 0xA1, 0x01,
+    0x09, 0x01, 0x15, 0x00, 0x26, 0xFF, 0x00,
+    0x75, 0x08, 0x85, KNX_CONTROL_REPORT_ID, 0x95, 0x41,
+    0xB1, 0x02, 0xC0,
 };
 
 //
@@ -53,7 +50,7 @@ HID_REPORT_DESCRIPTOR       G_DefaultReportDescriptor[] = {
 HID_DESCRIPTOR              G_DefaultHidDescriptor = {
     0x09,   // length of HID descriptor
     0x21,   // descriptor type == HID  0x21
-    0x0100, // hid spec release
+    0x0110, // HID 1.10, matching the KAIStack USBIF HID class descriptor
     0x00,   // country code == Not Specified
     0x01,   // number of HID class descriptors
     {                                       //DescriptorList[0]
@@ -176,7 +173,15 @@ Return Value:
 
     deviceContext = GetDeviceContext(device);
     deviceContext->Device       = device;
-    deviceContext->DeviceData   = 0;
+    {
+        WDF_OBJECT_ATTRIBUTES lockAttributes;
+        WDF_OBJECT_ATTRIBUTES_INIT(&lockAttributes);
+        lockAttributes.ParentObject = device;
+        status = WdfWaitLockCreate(&lockAttributes, &deviceContext->ReportLock);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+    }
 
     hidAttributes = &deviceContext->HidDeviceAttributes;
     RtlZeroMemory(hidAttributes, sizeof(HID_DEVICE_ATTRIBUTES));
@@ -205,35 +210,9 @@ Return Value:
     //
     deviceContext->HidDescriptor = G_DefaultHidDescriptor;
 
-    //
-    // Check to see if we need to read the Report Descriptor from
-    // registry. If the "ReadFromRegistry" flag in the registry is set
-    // then we will read the descriptor from registry using routine
-    // ReadDescriptorFromRegistry(). Otherwise, we will use the
-    // hard-coded default report descriptor.
-    //
-
-    status = CheckRegistryForDescriptor(device);
-    if (NT_SUCCESS(status)){
-        //
-        // We need to read read descriptor from registry
-        //
-        status = ReadDescriptorFromRegistry(device);
-        if (!NT_SUCCESS(status)){
-            KdPrint(("Failed to read descriptor from registry\n"));
-        }
-    }
-
-    //
-    // We will use hard-coded report descriptor if registry one is not used.
-    //
-    if (!NT_SUCCESS(status)){
-        deviceContext->ReportDescriptor = G_DefaultReportDescriptor;
-        KdPrint(("Using Hard-coded Report descriptor\n"));
-        status = STATUS_SUCCESS;
-    }
-
-    return status;
+    // The KNX descriptor must not be replaced by the sample's registry override.
+    deviceContext->ReportDescriptor = G_DefaultReportDescriptor;
+    return STATUS_SUCCESS;
 }
 
 #ifdef _KERNEL_MODE
@@ -304,7 +283,6 @@ Return Value:
     queueContext = GetQueueContext(queue);
     queueContext->Queue         = queue;
     queueContext->DeviceContext = GetDeviceContext(Device);
-    queueContext->OutputReport  = 0;
 
     *Queue = queue;
     return status;
@@ -643,57 +621,33 @@ Return Value:
 --*/
 
 {
-    NTSTATUS                status;
-    HID_XFER_PACKET         packet;
-    ULONG                   reportSize;
-    PHIDMINI_OUTPUT_REPORT  outputReport;
+    NTSTATUS status;
+    HID_XFER_PACKET packet;
+    PDEVICE_CONTEXT context = QueueContext->DeviceContext;
+    ULONG tail;
 
-    KdPrint(("WriteReport\n"));
+    status = RequestGetHidXferPacket_ToWriteToDevice(Request, &packet);
+    if (!NT_SUCCESS(status)) return status;
+    if (packet.reportId != KNX_HID_REPORT_ID ||
+        packet.reportBufferLen < KNX_HID_REPORT_SIZE ||
+        packet.reportBuffer[0] != KNX_HID_REPORT_ID)
+        return STATUS_INVALID_PARAMETER;
 
-    status = RequestGetHidXferPacket_ToWriteToDevice(
-                            Request,
-                            &packet);
-    if( !NT_SUCCESS(status) ) {
-        return status;
+    WdfWaitLockAcquire(context->ReportLock, NULL);
+    if (context->HostCount == KNX_REPORT_QUEUE_DEPTH) {
+        WdfWaitLockRelease(context->ReportLock);
+        return STATUS_DEVICE_BUSY;
     }
-
-    if (packet.reportId != CONTROL_COLLECTION_REPORT_ID) {
-        //
-        // Return error for unknown collection
-        //
-        status = STATUS_INVALID_PARAMETER;
-        KdPrint(("WriteReport: unkown report id %d\n", packet.reportId));
-        return status;
-    }
-
-    //
-    // before touching buffer make sure buffer is big enough.
-    //
-    reportSize = sizeof(HIDMINI_OUTPUT_REPORT);
-
-    if (packet.reportBufferLen < reportSize) {
-        status = STATUS_INVALID_BUFFER_SIZE;
-        KdPrint(("WriteReport: invalid input buffer. size %d, expect %d\n",
-                            packet.reportBufferLen, reportSize));
-        return status;
-    }
-
-    outputReport = (PHIDMINI_OUTPUT_REPORT)packet.reportBuffer;
-
-    //
-    // Store the device data in device extension.
-    //
-    QueueContext->DeviceContext->DeviceData = outputReport->Data;
-
-    //
-    // set status and information
-    //
-    WdfRequestSetInformation(Request, reportSize);
-    return status;
+    tail = (context->HostHead + context->HostCount) % KNX_REPORT_QUEUE_DEPTH;
+    RtlCopyMemory(context->HostReports[tail], packet.reportBuffer, KNX_HID_REPORT_SIZE);
+    ++context->HostCount;
+    WdfWaitLockRelease(context->ReportLock);
+    WdfRequestSetInformation(Request, KNX_HID_REPORT_SIZE);
+    return STATUS_SUCCESS;
 }
 
 
-HRESULT
+NTSTATUS
 GetFeature(
     _In_  PQUEUE_CONTEXT    QueueContext,
     _In_  WDFREQUEST        Request
@@ -716,69 +670,29 @@ Return Value:
 
 --*/
 {
-    NTSTATUS                status;
-    HID_XFER_PACKET         packet;
-    ULONG                   reportSize;
-    PMY_DEVICE_ATTRIBUTES   myAttributes;
-    PHID_DEVICE_ATTRIBUTES  hidAttributes = &QueueContext->DeviceContext->HidDeviceAttributes;
+    NTSTATUS status;
+    HID_XFER_PACKET packet;
+    PDEVICE_CONTEXT context = QueueContext->DeviceContext;
 
-    KdPrint(("GetFeature\n"));
+    status = RequestGetHidXferPacket_ToReadFromDevice(Request, &packet);
+    if (!NT_SUCCESS(status)) return status;
+    if (packet.reportId != KNX_CONTROL_REPORT_ID ||
+        packet.reportBufferLen < KNX_CONTROL_FEATURE_SIZE)
+        return STATUS_INVALID_BUFFER_SIZE;
 
-    status = RequestGetHidXferPacket_ToReadFromDevice(
-                            Request,
-                            &packet);
-    if( !NT_SUCCESS(status) ) {
-        return status;
+    RtlZeroMemory(packet.reportBuffer, KNX_CONTROL_FEATURE_SIZE);
+    packet.reportBuffer[0] = KNX_CONTROL_REPORT_ID;
+    WdfWaitLockAcquire(context->ReportLock, NULL);
+    if (context->HostCount != 0) {
+        packet.reportBuffer[1] = KNX_FEATURE_OUTPUT_AVAILABLE;
+        RtlCopyMemory(packet.reportBuffer + 2,
+                      context->HostReports[context->HostHead], KNX_HID_REPORT_SIZE);
+        context->HostHead = (context->HostHead + 1) % KNX_REPORT_QUEUE_DEPTH;
+        --context->HostCount;
     }
-
-    if (packet.reportId != CONTROL_COLLECTION_REPORT_ID) {
-        //
-        // If collection ID is not for control collection then handle
-        // this request just as you would for a regular collection.
-        //
-        status = STATUS_INVALID_PARAMETER;
-        KdPrint(("GetFeature: invalid report id %d\n", packet.reportId));
-        return status;
-    }
-
-    //
-    // Since output buffer is for write only (no read allowed by UMDF in output
-    // buffer), any read from output buffer would be reading garbage), so don't
-    // let app embed custom control code in output buffer. The minidriver can
-    // support multiple features using separate report ID instead of using
-    // custom control code. Since this is targeted at report ID 1, we know it
-    // is a request for getting attributes.
-    //
-    // While KMDF does not enforce the rule (disallow read from output buffer),
-    // it is good practice to not do so.
-    //
-
-    reportSize = sizeof(MY_DEVICE_ATTRIBUTES) + sizeof(packet.reportId);
-    if (packet.reportBufferLen < reportSize) {
-        status = STATUS_INVALID_BUFFER_SIZE;
-        KdPrint(("GetFeature: output buffer too small. Size %d, expect %d\n",
-                            packet.reportBufferLen, reportSize));
-        return status;
-    }
-
-    //
-    // Since this device has one report ID, hidclass would pass on the report
-    // ID in the buffer (it wouldn't if report descriptor did not have any report
-    // ID). However, since UMDF allows only writes to an output buffer, we can't
-    // "read" the report ID from "output" buffer. There is no need to read the
-    // report ID since we get it other way as shown above, however this is
-    // something to keep in mind.
-    //
-    myAttributes = (PMY_DEVICE_ATTRIBUTES)(packet.reportBuffer + sizeof(packet.reportId));
-    myAttributes->ProductID     = hidAttributes->ProductID;
-    myAttributes->VendorID      = hidAttributes->VendorID;
-    myAttributes->VersionNumber = hidAttributes->VersionNumber;
-
-    //
-    // Report how many bytes were copied
-    //
-    WdfRequestSetInformation(Request, reportSize);
-    return status;
+    WdfWaitLockRelease(context->ReportLock);
+    WdfRequestSetInformation(Request, KNX_CONTROL_FEATURE_SIZE);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -806,79 +720,32 @@ Return Value:
 
 --*/
 {
-    NTSTATUS                status;
-    HID_XFER_PACKET         packet;
-    ULONG                   reportSize;
-    PHIDMINI_CONTROL_INFO   controlInfo;
-    PHID_DEVICE_ATTRIBUTES  hidAttributes = &QueueContext->DeviceContext->HidDeviceAttributes;
+    NTSTATUS status;
+    HID_XFER_PACKET packet;
+    PDEVICE_CONTEXT context = QueueContext->DeviceContext;
+    ULONG tail;
 
-    KdPrint(("SetFeature\n"));
+    status = RequestGetHidXferPacket_ToWriteToDevice(Request, &packet);
+    if (!NT_SUCCESS(status)) return status;
+    if (packet.reportId != KNX_CONTROL_REPORT_ID ||
+        packet.reportBufferLen < KNX_CONTROL_FEATURE_SIZE ||
+        packet.reportBuffer[0] != KNX_CONTROL_REPORT_ID ||
+        packet.reportBuffer[1] != KNX_FEATURE_INJECT_INPUT ||
+        packet.reportBuffer[2] != KNX_HID_REPORT_ID)
+        return STATUS_INVALID_PARAMETER;
 
-    status = RequestGetHidXferPacket_ToWriteToDevice(
-                            Request,
-                            &packet);
-    if( !NT_SUCCESS(status) ) {
-        return status;
+    WdfWaitLockAcquire(context->ReportLock, NULL);
+    if (context->InputCount == KNX_REPORT_QUEUE_DEPTH) {
+        WdfWaitLockRelease(context->ReportLock);
+        return STATUS_DEVICE_BUSY;
     }
-
-    if (packet.reportId != CONTROL_COLLECTION_REPORT_ID) {
-        //
-        // If collection ID is not for control collection then handle
-        // this request just as you would for a regular collection.
-        //
-        status = STATUS_INVALID_PARAMETER;
-        KdPrint(("SetFeature: invalid report id %d\n", packet.reportId));
-        return status;
-    }
-
-    //
-    // before touching control code make sure buffer is big enough.
-    //
-    reportSize = sizeof(HIDMINI_CONTROL_INFO);
-
-    if (packet.reportBufferLen < reportSize) {
-        status = STATUS_INVALID_BUFFER_SIZE;
-        KdPrint(("SetFeature: invalid input buffer. size %d, expect %d\n",
-                            packet.reportBufferLen, reportSize));
-        return status;
-    }
-
-    controlInfo = (PHIDMINI_CONTROL_INFO)packet.reportBuffer;
-
-    switch(controlInfo->ControlCode)
-    {
-    case HIDMINI_CONTROL_CODE_SET_ATTRIBUTES:
-        //
-        // Store the device attributes in device extension
-        //
-        hidAttributes->ProductID     = controlInfo->u.Attributes.ProductID;
-        hidAttributes->VendorID      = controlInfo->u.Attributes.VendorID;
-        hidAttributes->VersionNumber = controlInfo->u.Attributes.VersionNumber;
-
-        //
-        // set status and information
-        //
-        WdfRequestSetInformation(Request, reportSize);
-        break;
-
-    case HIDMINI_CONTROL_CODE_DUMMY1:
-        status = STATUS_NOT_IMPLEMENTED;
-        KdPrint(("SetFeature: HIDMINI_CONTROL_CODE_DUMMY1\n"));
-        break;
-
-    case HIDMINI_CONTROL_CODE_DUMMY2:
-        status = STATUS_NOT_IMPLEMENTED;
-        KdPrint(("SetFeature: HIDMINI_CONTROL_CODE_DUMMY2\n"));
-        break;
-
-    default:
-        status = STATUS_NOT_IMPLEMENTED;
-        KdPrint(("SetFeature: Unknown control Code 0x%x\n",
-                            controlInfo->ControlCode));
-        break;
-    }
-
-    return status;
+    tail = (context->InputHead + context->InputCount) % KNX_REPORT_QUEUE_DEPTH;
+    RtlCopyMemory(context->InputReports[tail], packet.reportBuffer + 2,
+                  KNX_HID_REPORT_SIZE);
+    ++context->InputCount;
+    WdfWaitLockRelease(context->ReportLock);
+    WdfRequestSetInformation(Request, KNX_CONTROL_FEATURE_SIZE);
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -904,48 +771,28 @@ Return Value:
 
 --*/
 {
-    NTSTATUS                status;
-    HID_XFER_PACKET         packet;
-    ULONG                   reportSize;
-    PHIDMINI_INPUT_REPORT   reportBuffer;
+    NTSTATUS status;
+    HID_XFER_PACKET packet;
+    PDEVICE_CONTEXT context = QueueContext->DeviceContext;
 
-    KdPrint(("GetInputReport\n"));
+    status = RequestGetHidXferPacket_ToReadFromDevice(Request, &packet);
+    if (!NT_SUCCESS(status)) return status;
+    if (packet.reportId != KNX_HID_REPORT_ID ||
+        packet.reportBufferLen < KNX_HID_REPORT_SIZE)
+        return STATUS_INVALID_BUFFER_SIZE;
 
-    status = RequestGetHidXferPacket_ToReadFromDevice(
-                            Request,
-                            &packet);
-    if( !NT_SUCCESS(status) ) {
-        return status;
+    WdfWaitLockAcquire(context->ReportLock, NULL);
+    if (context->InputCount == 0) {
+        WdfWaitLockRelease(context->ReportLock);
+        return STATUS_DEVICE_NOT_READY;
     }
-
-    if (packet.reportId != CONTROL_COLLECTION_REPORT_ID) {
-        //
-        // If collection ID is not for control collection then handle
-        // this request just as you would for a regular collection.
-        //
-        status = STATUS_INVALID_PARAMETER;
-        KdPrint(("GetInputReport: invalid report id %d\n", packet.reportId));
-        return status;
-    }
-
-    reportSize = sizeof(HIDMINI_INPUT_REPORT);
-    if (packet.reportBufferLen < reportSize) {
-        status = STATUS_INVALID_BUFFER_SIZE;
-        KdPrint(("GetInputReport: output buffer too small. Size %d, expect %d\n",
-                            packet.reportBufferLen, reportSize));
-        return status;
-    }
-
-    reportBuffer = (PHIDMINI_INPUT_REPORT)(packet.reportBuffer);
-
-    reportBuffer->ReportId = CONTROL_COLLECTION_REPORT_ID;
-    reportBuffer->Data     = QueueContext->OutputReport;
-
-    //
-    // Report how many bytes were copied
-    //
-    WdfRequestSetInformation(Request, reportSize);
-    return status;
+    RtlCopyMemory(packet.reportBuffer,
+                  context->InputReports[context->InputHead], KNX_HID_REPORT_SIZE);
+    context->InputHead = (context->InputHead + 1) % KNX_REPORT_QUEUE_DEPTH;
+    --context->InputCount;
+    WdfWaitLockRelease(context->ReportLock);
+    WdfRequestSetInformation(Request, KNX_HID_REPORT_SIZE);
+    return STATUS_SUCCESS;
 }
 
 
@@ -972,51 +819,7 @@ Return Value:
 
 --*/
 {
-    NTSTATUS                status;
-    HID_XFER_PACKET         packet;
-    ULONG                   reportSize;
-    PHIDMINI_OUTPUT_REPORT  reportBuffer;
-
-    KdPrint(("SetOutputReport\n"));
-
-    status = RequestGetHidXferPacket_ToWriteToDevice(
-                            Request,
-                            &packet);
-    if( !NT_SUCCESS(status) ) {
-        return status;
-    }
-
-    if (packet.reportId != CONTROL_COLLECTION_REPORT_ID) {
-        //
-        // If collection ID is not for control collection then handle
-        // this request just as you would for a regular collection.
-        //
-        status = STATUS_INVALID_PARAMETER;
-        KdPrint(("SetOutputReport: unkown report id %d\n", packet.reportId));
-        return status;
-    }
-
-    //
-    // before touching buffer make sure buffer is big enough.
-    //
-    reportSize = sizeof(HIDMINI_OUTPUT_REPORT);
-
-    if (packet.reportBufferLen < reportSize) {
-        status = STATUS_INVALID_BUFFER_SIZE;
-        KdPrint(("SetOutputReport: invalid input buffer. size %d, expect %d\n",
-                            packet.reportBufferLen, reportSize));
-        return status;
-    }
-
-    reportBuffer = (PHIDMINI_OUTPUT_REPORT)packet.reportBuffer;
-
-    QueueContext->OutputReport = reportBuffer->Data;
-
-    //
-    // Report how many bytes were copied
-    //
-    WdfRequestSetInformation(Request, reportSize);
-    return status;
+    return WriteReport(QueueContext, Request);
 }
 
 
@@ -1279,7 +1082,6 @@ Return Value:
     PMANUAL_QUEUE_CONTEXT   queueContext;
     WDF_TIMER_CONFIG        timerConfig;
     WDF_OBJECT_ATTRIBUTES   timerAttributes;
-    ULONG                   timerPeriodInSeconds = 5;
 
     WDF_IO_QUEUE_CONFIG_INIT(
                             &queueConfig,
@@ -1307,7 +1109,7 @@ Return Value:
     WDF_TIMER_CONFIG_INIT_PERIODIC(
                             &timerConfig,
                             EvtTimerFunc,
-                            timerPeriodInSeconds * 1000);
+                            5);
 
     WDF_OBJECT_ATTRIBUTES_INIT(&timerAttributes);
     timerAttributes.ParentObject = queue;
@@ -1320,7 +1122,7 @@ Return Value:
         return status;
     }
 
-    WdfTimerStart(queueContext->Timer, WDF_REL_TIMEOUT_IN_SEC(1));
+    WdfTimerStart(queueContext->Timer, WDF_REL_TIMEOUT_IN_MS(5));
 
     *Queue = queue;
 
@@ -1347,33 +1149,37 @@ Return Value:
 
 --*/
 {
-    NTSTATUS                status;
-    WDFQUEUE                queue;
-    PMANUAL_QUEUE_CONTEXT   queueContext;
-    WDFREQUEST              request;
-    HIDMINI_INPUT_REPORT    readReport;
+    WDFQUEUE queue = (WDFQUEUE)WdfTimerGetParentObject(Timer);
+    PMANUAL_QUEUE_CONTEXT queueContext = GetManualQueueContext(queue);
+    PDEVICE_CONTEXT context = queueContext->DeviceContext;
+    WDFREQUEST request;
+    UCHAR report[KNX_HID_REPORT_SIZE];
+    NTSTATUS status;
+    BOOLEAN available;
 
-    KdPrint(("EvtTimerFunc\n"));
+    for (;;) {
+        WdfWaitLockAcquire(context->ReportLock, NULL);
+        available = context->InputCount != 0;
+        WdfWaitLockRelease(context->ReportLock);
+        if (!available) break;
 
-    queue = (WDFQUEUE)WdfTimerGetParentObject(Timer);
-    queueContext = GetManualQueueContext(queue);
+        status = WdfIoQueueRetrieveNextRequest(queue, &request);
+        if (!NT_SUCCESS(status)) break;
 
-    //
-    // see if we have a request in manual queue
-    //
-    status = WdfIoQueueRetrieveNextRequest(
-                            queueContext->Queue,
-                            &request);
+        WdfWaitLockAcquire(context->ReportLock, NULL);
+        if (context->InputCount == 0) {
+            WdfWaitLockRelease(context->ReportLock);
+            status = WdfRequestForwardToIoQueue(request, queue);
+            if (!NT_SUCCESS(status)) WdfRequestComplete(request, status);
+            break;
+        }
+        RtlCopyMemory(report, context->InputReports[context->InputHead],
+                      KNX_HID_REPORT_SIZE);
+        context->InputHead = (context->InputHead + 1) % KNX_REPORT_QUEUE_DEPTH;
+        --context->InputCount;
+        WdfWaitLockRelease(context->ReportLock);
 
-    if (NT_SUCCESS(status)) {
-
-        readReport.ReportId = CONTROL_FEATURE_REPORT_ID;
-        readReport.Data     = queueContext->DeviceContext->DeviceData;
-
-        status = RequestCopyFromBuffer(request,
-                            &readReport,
-                            sizeof(readReport));
-
+        status = RequestCopyFromBuffer(request, report, KNX_HID_REPORT_SIZE);
         WdfRequestComplete(request, status);
     }
 }

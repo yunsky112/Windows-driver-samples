@@ -10,7 +10,7 @@
 ;    INF file for installing HID minidriver (UMDF 2 version)
 ;
 ; Installation Notes:
-;    Using Devcon: Type "devcon install VhidminiUm.inf root\VhidminiUm" to install
+;    Using Devcon: Type "devcon install VhidminiUm.inf root\KnxVirtualHid" to install
 ;
 ; Important:
 ;    This INF depends on MsHidUmdf.inf, which was introduced in build 22000
@@ -37,10 +37,10 @@ VhidminiUm.dll=1
 ; ================= Device section =====================
 
 [Manufacturer]
-%ManufacturerString%=Microsoft, NT$ARCH$.10.0...22000
+%ManufacturerString%=KnxVirtual, NT$ARCH$.10.0...22000
 
-[Microsoft.NT$ARCH$.10.0...22000]
-%DeviceDesc%=VhidminiUm, root\VhidminiUm
+[KnxVirtual.NT$ARCH$.10.0...22000]
+%DeviceDesc%=VhidminiUm, root\KnxVirtualHid
 
 [VhidminiUm.NT]
 CopyFiles=UMDriverCopy
@@ -85,9 +85,9 @@ VhidminiUm.dll
 ;---------------------------------------------------------------;
 
 [Strings]
-ProviderString     ="TODO-Set-Provider"
-ManufacturerString ="TODO-Set-Manufacturer"
-ClassName          ="Sample Device"
-Disk_Description   ="HID minidriver (UMDF v2) Installation Disk"
-DeviceDesc         ="HID minidriver (UMDF v2) Device"
+ProviderString     ="QtKnxBleUsbif Project"
+ManufacturerString ="QtKnxBleUsbif Project"
+ClassName          ="KNX Virtual HID"
+Disk_Description   ="KNX Virtual HID (UMDF 2) Installation Disk"
+DeviceDesc         ="KNX Virtual USB Interface (UMDF 2)"
 WudfRdDisplayName  ="Windows Driver Foundation - User-mode Driver Framework Reflector"
