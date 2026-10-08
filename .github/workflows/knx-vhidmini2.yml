@@ -18,14 +18,16 @@ jobs:
             hid/vhidmini2
             packages.config
             Directory.Build.props
+      - uses: microsoft/setup-msbuild@v2
       - name: Restore Windows SDK and WDK packages
         shell: pwsh
         run: nuget restore .\packages.config -PackagesDirectory .\packages\
       - name: Build UMDF2 driver
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Continue'
+          $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $false
+          Get-Command msbuild -ErrorAction Stop | Out-Host
           msbuild .\hid\vhidmini2\driver\umdf2\VhidminiUm.vcxproj /m /p:Configuration=Release /p:Platform=x64 '/flp:logfile=build.log;verbosity=normal'
           $buildExitCode = $LASTEXITCODE
           if ($buildExitCode -ne 0) {
