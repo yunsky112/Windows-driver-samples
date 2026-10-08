@@ -1,0 +1,59 @@
+name: Build KNX virtual HID UMDF2
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [knx-virtual-hid]
+    paths:
+      - 'hid/vhidmini2/**'
+      - '.github/workflows/knx-vhidmini2.yml'
+
+jobs:
+  build:
+    runs-on: windows-2025-vs2026
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            hid/vhidmini2
+            packages.config
+            Directory.Build.props
+      - uses: microsoft/setup-msbuild@v2
+      - name: Restore Windows SDK and WDK packages
+        shell: pwsh
+        run: nuget restore .\packages.config -PackagesDirectory .\packages\
+      - name: Put WDK tools on PATH
+        shell: pwsh
+        run: |
+          $tool = Get-ChildItem .\packages -Recurse -File -Filter stampinf.exe |
+            Where-Object { $_.FullName -match 'Microsoft\.Windows\.WDK\.x64\.' -and $_.DirectoryName -match '\\x64$' } |
+            Select-Object -First 1
+          if (-not $tool) { throw 'stampinf.exe was not found in restored WDK packages' }
+          $tool.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          Write-Host "Using WDK tools from $($tool.DirectoryName)"
+      - name: Build UMDF2 driver
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          Get-Command msbuild -ErrorAction Stop | Out-Host
+          msbuild .\hid\vhidmini2\driver\umdf2\VhidminiUm.vcxproj /m /p:Configuration=Release /p:Platform=x64 '/flp:logfile=build.log;verbosity=normal'
+          $buildExitCode = $LASTEXITCODE
+          if ($buildExitCode -ne 0) {
+            if (Test-Path build.log) { $lines = Get-Content build.log -Tail 8 }
+            else { $lines = @('MSBuild did not create build.log') }
+            $lines | ForEach-Object {
+              $line = $_.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Host "::error::$line"
+            }
+            exit $buildExitCode
+          }
+      - name: Upload driver package
+        uses: actions/upload-artifact@v4
+        with:
+          name: knx-vhidmini2-x64
+          if-no-files-found: error
+          path: |
+            hid/vhidmini2/driver/umdf2/**/VhidminiUm.dll
+            hid/vhidmini2/driver/umdf2/**/VhidminiUm.inf
+            hid/vhidmini2/driver/umdf2/**/*.cat
