@@ -22,6 +22,13 @@ jobs:
       - name: Restore Windows SDK and WDK packages
         shell: pwsh
         run: nuget restore .\packages.config -PackagesDirectory .\packages\
+      - name: Put WDK tools on PATH
+        shell: pwsh
+        run: |
+          $tool = Get-ChildItem .\packages -Recurse -File -Filter stampinf.exe | Select-Object -First 1
+          if (-not $tool) { throw 'stampinf.exe was not found in restored WDK packages' }
+          $tool.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          Write-Host "Using WDK tools from $($tool.DirectoryName)"
       - name: Build UMDF2 driver
         shell: pwsh
         run: |
