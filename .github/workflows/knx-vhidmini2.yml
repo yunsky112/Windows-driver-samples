@@ -13,6 +13,11 @@ jobs:
     runs-on: windows-2025-vs2026
     steps:
       - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            hid/vhidmini2
+            packages.config
+            Directory.Build.props
       - name: Restore Windows SDK and WDK packages
         shell: pwsh
         run: nuget restore .\packages.config -PackagesDirectory .\packages\
