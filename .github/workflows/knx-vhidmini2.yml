@@ -31,7 +31,7 @@ jobs:
           msbuild .\hid\vhidmini2\driver\umdf2\VhidminiUm.vcxproj /m /p:Configuration=Release /p:Platform=x64 '/flp:logfile=build.log;verbosity=normal'
           $buildExitCode = $LASTEXITCODE
           if ($buildExitCode -ne 0) {
-            if (Test-Path build.log) { $lines = Get-Content build.log -Tail 30 }
+            if (Test-Path build.log) { $lines = Get-Content build.log -Tail 8 }
             else { $lines = @('MSBuild did not create build.log') }
             $lines | ForEach-Object {
               $line = $_.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
