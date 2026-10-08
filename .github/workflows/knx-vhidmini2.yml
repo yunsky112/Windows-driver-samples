@@ -23,7 +23,16 @@ jobs:
         run: nuget restore .\packages.config -PackagesDirectory .\packages\
       - name: Build UMDF2 driver
         shell: pwsh
-        run: msbuild .\hid\vhidmini2\driver\umdf2\VhidminiUm.vcxproj /m /p:Configuration=Release /p:Platform=x64
+        run: |
+          msbuild .\hid\vhidmini2\driver\umdf2\VhidminiUm.vcxproj /m /p:Configuration=Release /p:Platform=x64 '/flp:logfile=build.log;verbosity=normal'
+          $buildExitCode = $LASTEXITCODE
+          if ($buildExitCode -ne 0) {
+            Get-Content build.log | Select-String -Pattern '(?i)error\s+(?:C\d+|MSB\d+|LNK\d+|:)' | Select-Object -Last 30 | ForEach-Object {
+              $line = $_.Line.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Host "::error::$line"
+            }
+            exit $buildExitCode
+          }
       - name: Upload driver package
         uses: actions/upload-artifact@v4
         with:
