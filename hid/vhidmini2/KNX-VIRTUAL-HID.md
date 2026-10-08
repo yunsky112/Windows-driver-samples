@@ -29,7 +29,12 @@ pending `ReadReport` requests with those input reports. Both queues hold up to
 
 The INF installs a root-enumerated virtual HID (`root\KnxVirtualHid`). It is
 not a physical USB device and does not create a USB bus `USB\VID_28C2&PID_001C`
-node. ETS visibility must be verified on the target Windows release. The
-Microsoft UMDF2 sample INF requires Windows build 22000 or later. The GitHub
-workflow builds the x64 package; installation still requires an appropriate
-driver signature and a supported Windows system.
+node. ETS visibility must be verified on the target Windows release.
+
+The INF has two OS-specific installation paths: Windows 10 21H1 through 22H2
+(build 19043 and later) explicitly binds the inbox `mshidumdf.sys` function
+driver and `WUDFRd.sys` lower filter; Windows 11 (build 22000 and later) uses
+the inbox `MsHidUmdf.inf` and `WUDFRD.inf` sections. The UMDF2 DLL and Qt
+report protocol are identical on both paths. The GitHub workflow builds the
+x64 package. A successful build does not prove installation or ETS visibility;
+test on each target Windows version with an appropriate driver signature.

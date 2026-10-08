@@ -12,8 +12,8 @@
 ; Installation Notes:
 ;    Using Devcon: Type "devcon install VhidminiUm.inf root\KnxVirtualHid" to install
 ;
-; Important:
-;    This INF depends on MsHidUmdf.inf, which was introduced in build 22000
+; Windows 10 21H1+ uses the legacy inbox mshidumdf/WUDFRd services.
+; Windows 11 22000+ uses the newer inbox MsHidUmdf/WUDFRD INFs.
 ;
 ;--*/
 [Version]
@@ -37,10 +37,50 @@ VhidminiUm.dll=1
 ; ================= Device section =====================
 
 [Manufacturer]
-%ManufacturerString%=KnxVirtual, NT$ARCH$.10.0...22000
+%ManufacturerString%=KnxVirtual, NT$ARCH$.10.0...19043, NT$ARCH$.10.0...22000
+
+[KnxVirtual.NT$ARCH$.10.0...19043]
+%DeviceDesc%=VhidminiUmWin10, root\KnxVirtualHid
 
 [KnxVirtual.NT$ARCH$.10.0...22000]
 %DeviceDesc%=VhidminiUm, root\KnxVirtualHid
+
+; Windows 10 does not provide MsHidUmdf.inf or WUDFRD.inf. Explicitly
+; bind the inbox HID mapper as the function driver and WUDFRd as its
+; lower filter. The same UMDF 2 DLL and HID protocol are used on both OSes.
+[VhidminiUmWin10.NT]
+CopyFiles=UMDriverCopy
+
+[VhidminiUmWin10.NT.hw]
+AddReg=VhidminiUmWin10_LowerFilter
+
+[VhidminiUmWin10_LowerFilter]
+HKR,,LowerFilters,0x00010008,"WUDFRd"
+
+[VhidminiUmWin10.NT.Services]
+AddService=WUDFRd,0x000001f8,WUDFRD_ServiceInstall
+AddService=mshidumdf,0x000001fa,MSHIDUMDF_ServiceInstall
+
+[WUDFRD_ServiceInstall]
+DisplayName=%WudfRdDisplayName%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%12%\WUDFRd.sys
+
+[MSHIDUMDF_ServiceInstall]
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%12%\mshidumdf.sys
+
+[VhidminiUmWin10.NT.Wdf]
+UmdfService="VhidminiUm", VhidminiUm_Install
+UmdfServiceOrder=VhidminiUm
+UmdfKernelModeClientPolicy=AllowKernelModeClients
+UmdfFileObjectPolicy=AllowNullAndUnknownFileObjects
+UmdfMethodNeitherAction=Copy
+UmdfFsContextUsePolicy=CanUseFsContext2
 
 [VhidminiUm.NT]
 CopyFiles=UMDriverCopy
